@@ -1,11 +1,7 @@
 package main
 
-import (
-	"fmt"
-	"os"
-)
+import "github.com/holos-run/tokensmith/cmd/tokensmith/commands"
 
 func main() {
-	fmt.Println("tokensmith - Envoy External Authorizer for OIDC Token Exchange")
-	os.Exit(0)
+	commands.Execute()
 }

@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\ndocs: update all documentation to reference Istio 1.27\n\n- Replace \"Envoy 1.27\" with \"Istio 1.27\" across all docs\n- Update AGENTS.md (formerly CLAUDE.md) to be generic for any AI agent\n- Update README.md project description\n- Update plan/001-initial-setup.md implementation plan\nEOF\n)\")",
+      "Bash(git commit:*)",
+      "Bash(git mv:*)",
+      "Bash(go get:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(make test:*)",
+      "Bash(make build:*)",
+      "Bash(./bin/tokensmith:*)",
+      "Bash(make help:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

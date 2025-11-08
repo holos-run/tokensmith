@@ -41,3 +41,7 @@ Thumbs.db
 
 # Build artifacts
 *.log
+
+# Generated protobuf files
+*.pb.go
+*connect.go
