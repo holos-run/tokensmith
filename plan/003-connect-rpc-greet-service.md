@@ -1,4 +1,4 @@
-# Plan 004: Connect RPC Greet Service
+# Plan 003: Connect RPC Greet Service
 
 **Status**: Draft
 
