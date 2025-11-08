@@ -8,6 +8,8 @@ require (
 	connectrpc.com/connect v1.19.1
 	github.com/bufbuild/buf v1.59.0
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4
+	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/net v0.46.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251007200510-49b9836ed3ff
@@ -68,7 +70,6 @@ require (
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.20.6 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jdx/go-netrc v1.0.0 // indirect

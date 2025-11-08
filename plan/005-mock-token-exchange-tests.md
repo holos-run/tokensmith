@@ -1,6 +1,6 @@
 # Plan 005: Mock Token Exchange Unit Tests
 
-**Status**: Draft
+**Status**: Complete
 
 ## Overview
 
@@ -64,7 +64,7 @@ Kubernetes service account tokens are JWTs with the following standard claims:
 3. Verify exchange succeeds
 4. Parse both tokens and verify:
 
-**Claims that MUST be IDENTICAL:**
+**Claims that MUST be IDENTICAL (Authenticated Token → Exchanged Token):**
    - `sub` (Subject): `system:serviceaccount:default:default` - MUST match exactly
    - `aud` (Audience): `["https://kubernetes.default.svc"]` - MUST match exactly
    - `exp` (Expiration): Same Unix timestamp - MUST match exactly
@@ -72,11 +72,13 @@ Kubernetes service account tokens are JWTs with the following standard claims:
    - `kubernetes.io.namespace`: `default` - MUST match exactly
    - `kubernetes.io.serviceaccount.name`: `default` - MUST match exactly
 
-**Claims that MUST be DIFFERENT:**
+**Claims that MUST be DIFFERENT (Authenticated Token vs Exchanged Token):**
    - `iat` (Issued At): Different timestamps (tokens issued at different times)
    - `jti` (JWT ID): Different unique identifiers for each token
-   - `kubernetes.io.serviceaccount.uid`: Different UIDs (workload vs management service account)
+   - `kubernetes.io.serviceaccount.uid`: Different UIDs (workload SA vs management SA)
    - `nbf` (Not Before): Different timestamps (aligned with iat)
+
+**Note:** The authenticated token comes from the workload cluster, and the exchanged token is generated for the management cluster. The test verifies that critical identity claims (sub, aud, exp, iss, namespace, name) are preserved exactly during the exchange, while per-token unique identifiers (iat, jti, uid, nbf) differ as expected.
 
 **UID Validation:**
    - Both UIDs must be valid UUID format (e.g., `72b0e9c5-c44a-4de0-ae59-9b400f1221e0`)
