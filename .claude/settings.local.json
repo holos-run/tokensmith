@@ -15,7 +15,9 @@
       "Bash(make generate:*)",
       "Bash(buf generate:*)",
       "Bash(find:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(go build:*)",
+      "Bash(go doc:*)"
     ],
     "deny": [],
     "ask": []

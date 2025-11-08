@@ -46,6 +46,7 @@ environments using native service account identities.`,
 	cmd.AddCommand(NewVersionCmd())
 	cmd.AddCommand(NewServeCmd())
 	cmd.AddCommand(NewGreetCmd())
+	cmd.AddCommand(NewAuthzCmd())
 
 	return cmd
 }
