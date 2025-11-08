@@ -17,7 +17,9 @@
       "Bash(find:*)",
       "Bash(chmod:*)",
       "Bash(go build:*)",
-      "Bash(go doc:*)"
+      "Bash(go doc:*)",
+      "Bash(go test:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []
