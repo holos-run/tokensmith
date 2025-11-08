@@ -1,5 +1,7 @@
 # Plan 001: Initial Tokensmith Project Setup
 
+**Status**: Complete
+
 ## Overview
 Initialize tokensmith as a Go-based Envoy external authorizer for exchanging OIDC ID tokens between Kubernetes clusters.
 

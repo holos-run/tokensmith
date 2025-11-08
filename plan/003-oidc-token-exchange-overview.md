@@ -1,4 +1,6 @@
-# Plan 001: OIDC Token Exchange for Envoy External Authorization
+# Plan 003: OIDC Token Exchange for Envoy External Authorization
+
+**Status**: Draft
 
 ## Overview
 
