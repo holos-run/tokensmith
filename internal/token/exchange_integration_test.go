@@ -58,7 +58,7 @@ func TestTokenExchangeFlow(t *testing.T) {
 	saName := "default"
 	workloadUID := "72b0e9c5-c44a-4de0-ae59-9b400f1221e0"
 	managementUID := "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
-	audiences := []string{"https://kubernetes.default.svc"}
+	audiences := []string{"https://kubernetes.default.svc.cluster.local"}
 	expiration := time.Now().Add(1 * time.Hour)
 
 	// Generate workload cluster token
@@ -563,6 +563,350 @@ func TestTokenExpirationPreserved(t *testing.T) {
 	t.Logf("Input expiration:  %v (Unix: %d)", workloadClaims.ExpiresAt.Time, workloadClaims.ExpiresAt.Unix())
 	t.Logf("Output expiration: %v (Unix: %d)", managementClaims.ExpiresAt.Time, managementClaims.ExpiresAt.Unix())
 	t.Logf("✓ Timestamps match exactly")
+}
+
+// TestTokenExchangeCache tests that the cache correctly returns the same token
+// for repeated exchanges with the same workload identity
+func TestTokenExchangeCache(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup JWT signers
+	issuer := "https://kubernetes.default.svc.cluster.local"
+	workloadSigner, err := testutil.NewJWTSigner(issuer)
+	if err != nil {
+		t.Fatalf("Failed to create workload JWT signer: %v", err)
+	}
+
+	managementSigner, err := testutil.NewJWTSigner(issuer)
+	if err != nil {
+		t.Fatalf("Failed to create management JWT signer: %v", err)
+	}
+
+	// Test data
+	namespace := "default"
+	saName := "default"
+	workloadUID := "72b0e9c5-c44a-4de0-ae59-9b400f1221e0"
+	managementUID := "a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7"
+	audiences := []string{"https://kubernetes.default.svc"}
+	expiration := time.Now().Add(1 * time.Hour)
+
+	// Generate workload cluster token
+	workloadToken, err := workloadSigner.GenerateToken(namespace, saName, workloadUID, audiences, expiration)
+	if err != nil {
+		t.Fatalf("Failed to generate workload token: %v", err)
+	}
+
+	// Setup fake workload client
+	workloadClient := fake.NewSimpleClientset()
+	workloadClient.PrependReactor("create", "tokenreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		createAction := action.(k8stesting.CreateAction)
+		tr := createAction.GetObject().(*authenticationv1.TokenReview)
+
+		tr.Status = authenticationv1.TokenReviewStatus{
+			Authenticated: true,
+			User: authenticationv1.UserInfo{
+				Username: "system:serviceaccount:" + namespace + ":" + saName,
+				UID:      workloadUID,
+			},
+		}
+		return true, tr, nil
+	})
+
+	// Setup fake management client
+	managementClient := fake.NewSimpleClientset()
+
+	// Add service account
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      saName,
+			Namespace: namespace,
+			UID:       types.UID(managementUID),
+		},
+	}
+	_, err = managementClient.CoreV1().ServiceAccounts(namespace).Create(ctx, sa, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create service account: %v", err)
+	}
+
+	// Track number of CreateToken API calls
+	createTokenCallCount := 0
+
+	// Add reactor to mock TokenRequest
+	managementClient.PrependReactor("create", "serviceaccounts", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() == "token" {
+			createTokenCallCount++
+			createAction := action.(k8stesting.CreateAction)
+			tokenReq := createAction.GetObject().(*authenticationv1.TokenRequest)
+
+			jwtToken, err := managementSigner.GenerateToken(
+				namespace,
+				saName,
+				managementUID,
+				tokenReq.Spec.Audiences,
+				expiration,
+			)
+			if err != nil {
+				return true, nil, err
+			}
+
+			tokenReq.Status = authenticationv1.TokenRequestStatus{
+				Token:               jwtToken,
+				ExpirationTimestamp: metav1.Time{Time: expiration},
+			}
+			return true, tokenReq, nil
+		}
+		return false, nil, nil
+	})
+
+	// Create validator and exchanger
+	validator := NewValidator(workloadClient)
+	expirationSeconds := int64(3600)
+	exchanger := NewExchanger(managementClient, ExchangeConfig{
+		Audiences:         audiences,
+		ExpirationSeconds: &expirationSeconds,
+	})
+
+	// Validate the workload token once
+	identity, err := validator.Validate(ctx, workloadToken)
+	if err != nil {
+		t.Fatalf("Token validation failed: %v", err)
+	}
+
+	// First exchange - should be a cache miss
+	token1, err := exchanger.Exchange(ctx, identity)
+	if err != nil {
+		t.Fatalf("First token exchange failed: %v", err)
+	}
+
+	if createTokenCallCount != 1 {
+		t.Errorf("Expected 1 CreateToken API call after first exchange, got %d", createTokenCallCount)
+	}
+
+	// Second exchange - should be a cache hit
+	token2, err := exchanger.Exchange(ctx, identity)
+	if err != nil {
+		t.Fatalf("Second token exchange failed: %v", err)
+	}
+
+	// Verify same token returned
+	if token1 != token2 {
+		t.Error("Expected same token from cache, got different tokens")
+	}
+
+	// Verify no additional CreateToken API call
+	if createTokenCallCount != 1 {
+		t.Errorf("Expected still 1 CreateToken API call after second exchange (cache hit), got %d", createTokenCallCount)
+	}
+
+	// Third exchange - should still be a cache hit
+	token3, err := exchanger.Exchange(ctx, identity)
+	if err != nil {
+		t.Fatalf("Third token exchange failed: %v", err)
+	}
+
+	if token1 != token3 {
+		t.Error("Expected same token from cache on third request, got different token")
+	}
+
+	if createTokenCallCount != 1 {
+		t.Errorf("Expected still 1 CreateToken API call after third exchange (cache hit), got %d", createTokenCallCount)
+	}
+
+	t.Logf("\n--- Cache Performance ---")
+	t.Logf("Total exchanges: 3")
+	t.Logf("CreateToken API calls: %d", createTokenCallCount)
+	t.Logf("Cache hit rate: %.0f%%", (2.0/3.0)*100)
+	t.Logf("✓ Cache successfully reduced API calls from 3 to 1")
+}
+
+// TestTokenExchangeCacheDifferentUIDs tests that different workload UIDs
+// get different cached tokens
+func TestTokenExchangeCacheDifferentUIDs(t *testing.T) {
+	ctx := context.Background()
+
+	// Setup JWT signers
+	issuer := "https://kubernetes.default.svc.cluster.local"
+	workloadSigner, err := testutil.NewJWTSigner(issuer)
+	if err != nil {
+		t.Fatalf("Failed to create workload JWT signer: %v", err)
+	}
+
+	managementSigner, err := testutil.NewJWTSigner(issuer)
+	if err != nil {
+		t.Fatalf("Failed to create management JWT signer: %v", err)
+	}
+
+	// Test data for two different service accounts
+	namespace := "default"
+	sa1Name := "sa1"
+	sa1WorkloadUID := "11111111-1111-1111-1111-111111111111"
+	sa1ManagementUID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+	sa2Name := "sa2"
+	sa2WorkloadUID := "22222222-2222-2222-2222-222222222222"
+	sa2ManagementUID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+	audiences := []string{"https://kubernetes.default.svc"}
+	expiration := time.Now().Add(1 * time.Hour)
+
+	// Generate tokens for both service accounts
+	token1, err := workloadSigner.GenerateToken(namespace, sa1Name, sa1WorkloadUID, audiences, expiration)
+	if err != nil {
+		t.Fatalf("Failed to generate token 1: %v", err)
+	}
+
+	token2, err := workloadSigner.GenerateToken(namespace, sa2Name, sa2WorkloadUID, audiences, expiration)
+	if err != nil {
+		t.Fatalf("Failed to generate token 2: %v", err)
+	}
+
+	// Setup fake workload client
+	workloadClient := fake.NewSimpleClientset()
+	workloadClient.PrependReactor("create", "tokenreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		createAction := action.(k8stesting.CreateAction)
+		tr := createAction.GetObject().(*authenticationv1.TokenReview)
+
+		// Parse the token to determine which SA it's for
+		// For testing, we'll just check which token was provided
+		tokenStr := tr.Spec.Token
+		var username, uid string
+		if tokenStr == token1 {
+			username = "system:serviceaccount:" + namespace + ":" + sa1Name
+			uid = sa1WorkloadUID
+		} else {
+			username = "system:serviceaccount:" + namespace + ":" + sa2Name
+			uid = sa2WorkloadUID
+		}
+
+		tr.Status = authenticationv1.TokenReviewStatus{
+			Authenticated: true,
+			User: authenticationv1.UserInfo{
+				Username: username,
+				UID:      uid,
+			},
+		}
+		return true, tr, nil
+	})
+
+	// Setup fake management client with both service accounts
+	managementClient := fake.NewSimpleClientset()
+
+	sa1 := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sa1Name,
+			Namespace: namespace,
+			UID:       types.UID(sa1ManagementUID),
+		},
+	}
+	sa2 := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sa2Name,
+			Namespace: namespace,
+			UID:       types.UID(sa2ManagementUID),
+		},
+	}
+
+	_, err = managementClient.CoreV1().ServiceAccounts(namespace).Create(ctx, sa1, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create sa1: %v", err)
+	}
+	_, err = managementClient.CoreV1().ServiceAccounts(namespace).Create(ctx, sa2, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create sa2: %v", err)
+	}
+
+	// Track which service accounts we've created tokens for
+	// to properly route the reactor calls
+	tokenCallOrder := []struct {
+		name string
+		uid  string
+	}{
+		{sa1Name, sa1ManagementUID},
+		{sa2Name, sa2ManagementUID},
+		{sa1Name, sa1ManagementUID}, // Third call for sa1 again (cache test)
+	}
+	tokenCallIndex := 0
+
+	// Add reactor to mock TokenRequest
+	managementClient.PrependReactor("create", "serviceaccounts", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() == "token" {
+			createAction := action.(k8stesting.CreateAction)
+			tokenReq := createAction.GetObject().(*authenticationv1.TokenRequest)
+
+			// Get the current SA name and UID from our call order
+			if tokenCallIndex >= len(tokenCallOrder) {
+				return true, nil, nil
+			}
+			currentSA := tokenCallOrder[tokenCallIndex]
+			tokenCallIndex++
+
+			jwtToken, err := managementSigner.GenerateToken(
+				namespace,
+				currentSA.name,
+				currentSA.uid,
+				tokenReq.Spec.Audiences,
+				expiration,
+			)
+			if err != nil {
+				return true, nil, err
+			}
+
+			tokenReq.Status = authenticationv1.TokenRequestStatus{
+				Token:               jwtToken,
+				ExpirationTimestamp: metav1.Time{Time: expiration},
+			}
+			return true, tokenReq, nil
+		}
+		return false, nil, nil
+	})
+
+	// Create validator and exchanger
+	validator := NewValidator(workloadClient)
+	expirationSeconds := int64(3600)
+	exchanger := NewExchanger(managementClient, ExchangeConfig{
+		Audiences:         audiences,
+		ExpirationSeconds: &expirationSeconds,
+	})
+
+	// Validate and exchange for SA1
+	identity1, err := validator.Validate(ctx, token1)
+	if err != nil {
+		t.Fatalf("Failed to validate token 1: %v", err)
+	}
+	managementToken1, err := exchanger.Exchange(ctx, identity1)
+	if err != nil {
+		t.Fatalf("Failed to exchange token 1: %v", err)
+	}
+
+	// Validate and exchange for SA2
+	identity2, err := validator.Validate(ctx, token2)
+	if err != nil {
+		t.Fatalf("Failed to validate token 2: %v", err)
+	}
+	managementToken2, err := exchanger.Exchange(ctx, identity2)
+	if err != nil {
+		t.Fatalf("Failed to exchange token 2: %v", err)
+	}
+
+	// Verify tokens are different (different UIDs = different cache entries)
+	if managementToken1 == managementToken2 {
+		t.Error("Expected different tokens for different workload UIDs, got same token")
+	}
+
+	// Exchange again for SA1 - should get same cached token
+	managementToken1Again, err := exchanger.Exchange(ctx, identity1)
+	if err != nil {
+		t.Fatalf("Failed to exchange token 1 again: %v", err)
+	}
+	if managementToken1 != managementToken1Again {
+		t.Error("Expected same cached token for SA1, got different token")
+	}
+
+	t.Logf("\n--- Multi-UID Cache Test ---")
+	t.Logf("SA1 workload UID: %s", sa1WorkloadUID)
+	t.Logf("SA2 workload UID: %s", sa2WorkloadUID)
+	t.Logf("✓ Different UIDs correctly get different cached tokens")
+	t.Logf("✓ Same UID correctly returns cached token on subsequent request")
 }
 
 // Helper function to check if a string contains a substring

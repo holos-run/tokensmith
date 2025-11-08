@@ -1,7 +1,8 @@
 # Plan 007: Token Cache with Background Garbage Collection
 
-**Status**: 📋 Planned
+**Status**: ✅ Implemented
 **Date**: 2025-11-07
+**Implemented**: 2025-11-07
 
 ## Overview
 
@@ -331,10 +332,67 @@ done
 - ✅ Cache correctly stores and retrieves tokens by workload UID
 - ✅ Expired tokens are not returned from cache
 - ✅ Garbage collection removes expired entries every 5 minutes
-- ✅ Thread-safe for concurrent requests
+- ✅ Thread-safe for concurrent requests (verified with -race flag)
 - ✅ Integration tests verify cache hit/miss behavior
 - ✅ No breaking changes to existing API
 - ✅ Graceful shutdown stops background goroutine
+- ✅ All tests pass including race detection
+
+## Implementation Summary
+
+Successfully implemented token cache with the following components:
+
+### Files Created
+- **[internal/token/cache.go](../internal/token/cache.go)** - Thread-safe cache with background GC
+- **[internal/token/cache_test.go](../internal/token/cache_test.go)** - Comprehensive unit tests
+
+### Files Modified
+- **[internal/token/exchanger.go](../internal/token/exchanger.go)** - Integrated cache into Exchange and ExchangeWithMetadata methods
+- **[internal/token/exchange_integration_test.go](../internal/token/exchange_integration_test.go)** - Added TestTokenExchangeCache and TestTokenExchangeCacheDifferentUIDs
+
+### Test Results
+All tests pass with race detection:
+```
+=== RUN   TestCache_GetSet
+--- PASS: TestCache_GetSet (0.00s)
+=== RUN   TestCache_Expiration
+--- PASS: TestCache_Expiration (0.15s)
+=== RUN   TestCache_Cleanup
+--- PASS: TestCache_Cleanup (0.00s)
+=== RUN   TestCache_Concurrent
+--- PASS: TestCache_Concurrent (0.00s)
+=== RUN   TestCache_Stop
+--- PASS: TestCache_Stop (0.00s)
+=== RUN   TestCache_MultipleUIDs
+--- PASS: TestCache_MultipleUIDs (0.00s)
+=== RUN   TestCache_Overwrite
+--- PASS: TestCache_Overwrite (0.00s)
+=== RUN   TestCache_BackgroundCleanup
+--- PASS: TestCache_BackgroundCleanup (0.20s)
+=== RUN   TestTokenExchangeCache
+    exchange_integration_test.go:715:
+        --- Cache Performance ---
+    exchange_integration_test.go:716: Total exchanges: 3
+    exchange_integration_test.go:717: CreateToken API calls: 1
+    exchange_integration_test.go:718: Cache hit rate: 67%
+    exchange_integration_test.go:719: ✓ Cache successfully reduced API calls from 3 to 1
+--- PASS: TestTokenExchangeCache (0.68s)
+=== RUN   TestTokenExchangeCacheDifferentUIDs
+    exchange_integration_test.go:905:
+        --- Multi-UID Cache Test ---
+    exchange_integration_test.go:906: SA1 workload UID: 11111111-1111-1111-1111-111111111111
+    exchange_integration_test.go:907: SA2 workload UID: 22222222-2222-2222-2222-222222222222
+    exchange_integration_test.go:908: ✓ Different UIDs correctly get different cached tokens
+    exchange_integration_test.go:909: ✓ Same UID correctly returns cached token on subsequent request
+--- PASS: TestTokenExchangeCacheDifferentUIDs (0.51s)
+```
+
+### Key Features
+- **Simple Design**: Maps workload UID → cached token
+- **Thread-Safe**: Uses `sync.RWMutex` for concurrent access
+- **Auto-Cleanup**: Background goroutine runs every 5 minutes
+- **Graceful Shutdown**: `Stop()` method safely stops background GC (idempotent)
+- **No Breaking Changes**: Fully backward compatible with existing code
 
 ## Conclusion
 
