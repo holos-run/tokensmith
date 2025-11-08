@@ -53,15 +53,18 @@ Implement an Envoy external authorizer (ext_authz) that exchanges OIDC ID tokens
 
 ### Phase 2: Token Validation
 
-1. Implement OIDC token validator
-   - Fetch and cache JWKS from source cluster
-   - Validate token signature
-   - Validate standard claims (iss, aud, exp, iat, nbf)
-   - Validate Kubernetes-specific claims (sub format)
+1. Implement OIDC token validator using `coreos/go-oidc/v3`
+   - Initialize OIDC provider with discovery endpoint
+   - Create ID token verifier with audience configuration
+   - Leverage automatic JWKS caching and refresh (library handles this)
+   - Validate standard claims (iss, aud, exp, iat, nbf) - built into verifier
+   - Validate Kubernetes-specific claims (sub format for service accounts)
+   - Extract service account identity from validated token
 
 2. Add error handling and logging
    - Detailed error messages for debugging
-   - Structured logging
+   - Structured logging for verification attempts
+   - Log JWKS refresh events (when library fetches new keys)
 
 ### Phase 3: Token Exchange
 
@@ -126,10 +129,52 @@ mappings:
 
 ## Dependencies
 
+### Core Libraries
+
 - `google.golang.org/grpc` - gRPC server implementation
 - `github.com/envoyproxy/go-control-plane` - Envoy ext_authz API definitions
-- `github.com/golang-jwt/jwt/v5` - JWT creation and validation
+- `github.com/coreos/go-oidc/v3` - OIDC token verification with JWKS caching
+- `github.com/golang-jwt/jwt/v5` - JWT creation and signing
 - `gopkg.in/yaml.v3` - Configuration parsing
+
+### OIDC Token Verification: `coreos/go-oidc/v3`
+
+**Chosen for robust JWKS handling and concurrency safety.**
+
+**Key Features:**
+- **Smart Key Refresh**: Automatically retries verification after fetching fresh JWKS on signature failure
+  1. First attempt: Verify with cached keys
+  2. On failure: Fetch new keys from JWKS endpoint
+  3. Second attempt: Retry verification with fresh keys
+  4. Only fail if both attempts fail
+
+- **Concurrency-Safe**: Uses "inflight" pattern to prevent duplicate concurrent JWKS fetches
+  - Multiple goroutines wait on same in-flight request
+  - Thread-safe cache updates
+
+- **Production-Ready**:
+  - Most widely adopted Go OIDC library
+  - Used by Kubernetes and major projects
+  - Mature, well-tested implementation
+
+**Why not `zitadel/oidc`?**
+While ZITADEL maintains their own certified OIDC library, they use `coreos/go-oidc` for token verification. Their library is excellent for full OIDC server/client implementations but `coreos/go-oidc` is lighter weight and specifically optimized for token verification, which is our primary use case.
+
+**Usage Pattern:**
+```go
+import "github.com/coreos/go-oidc/v3/oidc"
+
+// Create provider (with OIDC discovery)
+provider, err := oidc.NewProvider(ctx, issuerURL)
+
+// Create verifier with configuration
+verifier := provider.Verifier(&oidc.Config{
+    ClientID: "audience",
+})
+
+// Verify token (handles JWKS caching and refresh automatically)
+idToken, err := verifier.Verify(ctx, rawToken)
+```
 
 ## Success Criteria
 
