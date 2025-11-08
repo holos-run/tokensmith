@@ -1,6 +1,6 @@
 # Plan 003: Connect RPC Greet Service
 
-**Status**: Approved
+**Status**: Complete
 
 ## Overview
 Implement a Connect RPC gRPC server with a simple greet endpoint, code generation using `go generate`, Cobra-based CLI commands, and structured JSON logging using the standard `slog` package.
