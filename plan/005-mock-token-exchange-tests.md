@@ -54,8 +54,8 @@ Kubernetes service account tokens are JWTs with the following standard claims:
 
 ### Scenario 1: Successful Token Exchange
 **Setup:**
-- Workload cluster has service account `default/default` with UID `workload-uid-123`
-- Management cluster has service account `default/default` with UID `management-uid-456`
+- Workload cluster has service account `default/default` with UID `workload-uid-123` (valid UUID format)
+- Management cluster has service account `default/default` with UID `management-uid-456` (valid UUID format)
 - Input token is valid with audience `https://kubernetes.default.svc`
 
 **Test Flow:**
@@ -63,15 +63,32 @@ Kubernetes service account tokens are JWTs with the following standard claims:
 2. Mock TokenRequest response (management cluster) returns new token
 3. Verify exchange succeeds
 4. Parse both tokens and verify:
-   - Namespace matches: `default`
-   - Service account name matches: `default`
-   - Audience matches: `https://kubernetes.default.svc`
-   - Expiration time matches (same Unix timestamp)
-   - UIDs are different (workload vs management)
+
+**Claims that MUST be IDENTICAL:**
+   - `sub` (Subject): `system:serviceaccount:default:default` - MUST match exactly
+   - `aud` (Audience): `["https://kubernetes.default.svc"]` - MUST match exactly
+   - `exp` (Expiration): Same Unix timestamp - MUST match exactly
+   - `iss` (Issuer): Same issuer URL - MUST match exactly
+   - `kubernetes.io.namespace`: `default` - MUST match exactly
+   - `kubernetes.io.serviceaccount.name`: `default` - MUST match exactly
+
+**Claims that MUST be DIFFERENT:**
+   - `iat` (Issued At): Different timestamps (tokens issued at different times)
+   - `jti` (JWT ID): Different unique identifiers for each token
+   - `kubernetes.io.serviceaccount.uid`: Different UIDs (workload vs management service account)
+   - `nbf` (Not Before): Different timestamps (aligned with iat)
+
+**UID Validation:**
+   - Both UIDs must be valid UUID format (e.g., `72b0e9c5-c44a-4de0-ae59-9b400f1221e0`)
+   - Workload UID ≠ Management UID
+   - Verify format matches: `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
 
 **Success Criteria:**
-- Test passes with clear output showing what was verified
-- Human can see the comparison of token claims
+- Test passes with clear output showing all verified claims
+- Human can see side-by-side comparison highlighting identical vs different claims
+- Test explicitly verifies `sub`, `aud`, and `exp` are identical
+- Test explicitly verifies `iat`, `jti`, `uid`, and `nbf` are different
+- Both UIDs validated as proper UUID format
 
 ### Scenario 2: Service Account Not Found in Management Cluster
 **Setup:**
@@ -237,6 +254,7 @@ import (
     "time"
 
     "github.com/golang-jwt/jwt/v5"
+    "github.com/google/uuid"
 )
 
 // TokenClaims represents Kubernetes service account token claims
@@ -280,6 +298,9 @@ func NewJWTSigner(issuer string) (*JWTSigner, error) {
 func (s *JWTSigner) GenerateToken(namespace, name, uid string, audiences []string, expiration time.Time) (string, error) {
     now := time.Now()
 
+    // Generate unique JWT ID (jti) - use UUID format
+    jti := uuid.New().String()
+
     claims := TokenClaims{
         RegisteredClaims: jwt.RegisteredClaims{
             Issuer:    s.issuer,
@@ -288,6 +309,7 @@ func (s *JWTSigner) GenerateToken(namespace, name, uid string, audiences []strin
             ExpiresAt: jwt.NewNumericDate(expiration),
             IssuedAt:  jwt.NewNumericDate(now),
             NotBefore: jwt.NewNumericDate(now),
+            ID:        jti, // JWT ID - unique for each token
         },
         Kubernetes: KubernetesClaims{
             Namespace: namespace,
@@ -371,6 +393,13 @@ managementClient.PrependReactor("create", "serviceaccounts", func(action testing
 Parse and verify both input and output tokens:
 
 ```go
+import (
+    "regexp"
+)
+
+// UUID validation regex
+var uuidRegex = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 // Parse workload token (input)
 workloadClaims, err := workloadSigner.ParseToken(workloadToken)
 if err != nil {
@@ -383,29 +412,115 @@ if err != nil {
     t.Fatalf("Failed to parse management token: %v", err)
 }
 
-// Verify claims match
+// ============================================================================
+// VERIFY CLAIMS THAT MUST BE IDENTICAL
+// ============================================================================
+
+// Subject (sub) - MUST be identical
+if workloadClaims.Subject != managementClaims.Subject {
+    t.Errorf("Subject mismatch: %s != %s",
+        workloadClaims.Subject, managementClaims.Subject)
+}
+
+// Audience (aud) - MUST be identical
+if len(workloadClaims.Audience) != len(managementClaims.Audience) {
+    t.Errorf("Audience length mismatch: %d != %d",
+        len(workloadClaims.Audience), len(managementClaims.Audience))
+} else {
+    for i := range workloadClaims.Audience {
+        if workloadClaims.Audience[i] != managementClaims.Audience[i] {
+            t.Errorf("Audience[%d] mismatch: %s != %s",
+                i, workloadClaims.Audience[i], managementClaims.Audience[i])
+        }
+    }
+}
+
+// Expiration (exp) - MUST be identical
+if !workloadClaims.ExpiresAt.Equal(*managementClaims.ExpiresAt) {
+    t.Errorf("Expiration mismatch: %v != %v",
+        workloadClaims.ExpiresAt, managementClaims.ExpiresAt)
+}
+
+// Issuer (iss) - MUST be identical
+if workloadClaims.Issuer != managementClaims.Issuer {
+    t.Errorf("Issuer mismatch: %s != %s",
+        workloadClaims.Issuer, managementClaims.Issuer)
+}
+
+// Namespace - MUST be identical
 if workloadClaims.Kubernetes.Namespace != managementClaims.Kubernetes.Namespace {
     t.Errorf("Namespace mismatch: %s != %s",
         workloadClaims.Kubernetes.Namespace,
         managementClaims.Kubernetes.Namespace)
 }
 
+// Service Account Name - MUST be identical
 if workloadClaims.Kubernetes.ServiceAccount.Name != managementClaims.Kubernetes.ServiceAccount.Name {
     t.Errorf("Service account name mismatch: %s != %s",
         workloadClaims.Kubernetes.ServiceAccount.Name,
         managementClaims.Kubernetes.ServiceAccount.Name)
 }
 
-// Verify expiration matches
-if !workloadClaims.ExpiresAt.Equal(*managementClaims.ExpiresAt) {
-    t.Errorf("Expiration mismatch: %v != %v",
-        workloadClaims.ExpiresAt, managementClaims.ExpiresAt)
+// ============================================================================
+// VERIFY CLAIMS THAT MUST BE DIFFERENT
+// ============================================================================
+
+// Issued At (iat) - MUST be different (tokens issued at different times)
+if workloadClaims.IssuedAt.Equal(*managementClaims.IssuedAt) {
+    t.Error("IssuedAt should be different (tokens issued at different times)")
 }
 
-// Verify UIDs are different
+// JWT ID (jti) - MUST be different (unique identifier for each token)
+if workloadClaims.ID == managementClaims.ID {
+    t.Error("JWT ID (jti) should be different (unique per token)")
+}
+
+// Service Account UID - MUST be different (workload vs management)
 if workloadClaims.Kubernetes.ServiceAccount.UID == managementClaims.Kubernetes.ServiceAccount.UID {
     t.Error("UIDs should be different (workload vs management)")
 }
+
+// Not Before (nbf) - MUST be different (aligned with iat)
+if workloadClaims.NotBefore.Equal(*managementClaims.NotBefore) {
+    t.Error("NotBefore should be different (aligned with IssuedAt)")
+}
+
+// ============================================================================
+// VALIDATE UID FORMAT
+// ============================================================================
+
+// Verify workload UID is valid UUID format
+if !uuidRegex.MatchString(workloadClaims.Kubernetes.ServiceAccount.UID) {
+    t.Errorf("Workload UID is not valid UUID format: %s",
+        workloadClaims.Kubernetes.ServiceAccount.UID)
+}
+
+// Verify management UID is valid UUID format
+if !uuidRegex.MatchString(managementClaims.Kubernetes.ServiceAccount.UID) {
+    t.Errorf("Management UID is not valid UUID format: %s",
+        managementClaims.Kubernetes.ServiceAccount.UID)
+}
+
+// ============================================================================
+// LOG VERIFICATION RESULTS
+// ============================================================================
+
+t.Logf("✓ Subject (sub) matches: %s", workloadClaims.Subject)
+t.Logf("✓ Audience (aud) matches: %v", workloadClaims.Audience)
+t.Logf("✓ Expiration (exp) matches: %v", workloadClaims.ExpiresAt.Time)
+t.Logf("✓ Issuer (iss) matches: %s", workloadClaims.Issuer)
+t.Logf("✓ Namespace matches: %s", workloadClaims.Kubernetes.Namespace)
+t.Logf("✓ Service account name matches: %s", workloadClaims.Kubernetes.ServiceAccount.Name)
+t.Logf("✓ IssuedAt (iat) differs: workload=%v, management=%v",
+    workloadClaims.IssuedAt.Time, managementClaims.IssuedAt.Time)
+t.Logf("✓ JWT ID (jti) differs: workload=%s, management=%s",
+    workloadClaims.ID, managementClaims.ID)
+t.Logf("✓ UID differs: workload=%s, management=%s",
+    workloadClaims.Kubernetes.ServiceAccount.UID,
+    managementClaims.Kubernetes.ServiceAccount.UID)
+t.Logf("✓ NotBefore (nbf) differs: workload=%v, management=%v",
+    workloadClaims.NotBefore.Time, managementClaims.NotBefore.Time)
+t.Logf("✓ Both UIDs are valid UUID format")
 ```
 
 ### 4. Test Output Format
@@ -475,19 +590,26 @@ Tests should produce clear, human-readable output showing JWT claim verification
 
 1. **TestTokenExchangeFlow** - Happy path test
    - Setup JWT signers for workload and management clusters
-   - Generate valid workload JWT for `default/default` service account
+   - Generate valid workload JWT for `default/default` with UUID-format UID
    - Setup fake clients with JWT-generating reactors
    - Create validator and exchanger
    - Execute validation
    - Execute exchange using `ExchangeWithMetadata()`
    - Parse both input and output JWTs
-   - Verify JWT claims:
-     - Namespace: `default` (matches)
-     - Service account: `default` (matches)
-     - Audience: `https://kubernetes.default.svc` (matches)
-     - Expiration timestamp (matches)
-     - UIDs are different (workload vs management)
-   - Print detailed comparison of JWT claims
+   - Verify claims that MUST be IDENTICAL:
+     - `sub` (Subject): `system:serviceaccount:default:default`
+     - `aud` (Audience): `["https://kubernetes.default.svc"]`
+     - `exp` (Expiration): Same Unix timestamp
+     - `iss` (Issuer): Same issuer URL
+     - `kubernetes.io.namespace`: `default`
+     - `kubernetes.io.serviceaccount.name`: `default`
+   - Verify claims that MUST be DIFFERENT:
+     - `iat` (Issued At): Different timestamps
+     - `jti` (JWT ID): Different UUIDs
+     - `kubernetes.io.serviceaccount.uid`: Different UUIDs (workload vs management)
+     - `nbf` (Not Before): Different timestamps
+   - Validate both UIDs are valid UUID format
+   - Print detailed comparison showing identical vs different claims
 
 2. **TestTokenExchangeServiceAccountNotFound**
    - Setup JWT signers
@@ -688,17 +810,21 @@ The standard audience for Kubernetes service account tokens is:
 
 For our tests, we'll use `https://kubernetes.default.svc` as this is the most common and recommended value.
 
-### Token Metadata Comparison
+### Token Claims Comparison
 
-We'll compare these fields between input and output tokens:
-- **Must Match**:
-  - Namespace
-  - Service Account Name
-  - Audience
-  - Expiration Time (Unix timestamp)
+**Claims that MUST be IDENTICAL between input and output tokens:**
+- `sub` (Subject) - Service account identity
+- `aud` (Audience) - Token audience
+- `exp` (Expiration) - Expiration timestamp (Unix)
+- `iss` (Issuer) - Issuer URL
+- `kubernetes.io.namespace` - Namespace
+- `kubernetes.io.serviceaccount.name` - Service account name
 
-- **Must Be Different**:
-  - Service Account UID (workload UID vs management UID)
+**Claims that MUST be DIFFERENT between input and output tokens:**
+- `iat` (Issued At) - Tokens issued at different times
+- `jti` (JWT ID) - Unique identifier per token (UUID format)
+- `kubernetes.io.serviceaccount.uid` - Service account UID (different between clusters, UUID format)
+- `nbf` (Not Before) - Aligned with iat, will differ
 
 ### Why This Approach
 
@@ -718,8 +844,9 @@ All dependencies already in go.mod - no new dependencies needed:
 - `k8s.io/api/core/v1` - Core Kubernetes API types
 - `k8s.io/api/authentication/v1` - Authentication API types (TokenReview, TokenRequest)
 - `github.com/golang-jwt/jwt/v5` - JWT generation and parsing (already added in plan 004)
+- `github.com/google/uuid` - UUID generation for jti claims (already in go.mod)
 
-The JWT library is already included for OIDC token operations, so no additional dependencies are required.
+All required libraries are already included, so no additional dependencies are required.
 
 ## Future Enhancements
 
