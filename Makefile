@@ -3,12 +3,16 @@ help: ## Show this help message
 	@echo "Available targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
+.PHONY: generate
+generate: ## Generate code from protobuf definitions
+	go generate ./...
+
 .PHONY: test
 test: ## Run all tests
 	go test -v -race -cover ./...
 
 .PHONY: build
-build: ## Build the tokensmith binary
+build: generate ## Build the tokensmith binary
 	go build -o bin/tokensmith ./cmd/tokensmith
 
 .PHONY: lint

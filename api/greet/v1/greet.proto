@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package greet.v1;
+
+option go_package = "github.com/holos-run/tokensmith/api/greet/v1;greetv1";
+
+// GreetService provides a simple greeting service.
+service GreetService {
+  // Greet returns a greeting message.
+  rpc Greet(GreetRequest) returns (GreetResponse) {}
+}
+
+// GreetRequest is the request message for Greet.
+message GreetRequest {
+  // name is the name to greet.
+  string name = 1;
+}
+
+// GreetResponse is the response message for Greet.
+message GreetResponse {
+  // greeting is the greeting message.
+  string greeting = 1;
+}

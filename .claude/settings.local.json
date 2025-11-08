@@ -10,7 +10,12 @@
       "Bash(make test:*)",
       "Bash(make build:*)",
       "Bash(./bin/tokensmith:*)",
-      "Bash(make help:*)"
+      "Bash(make help:*)",
+      "Bash(go install:*)",
+      "Bash(make generate:*)",
+      "Bash(buf generate:*)",
+      "Bash(find:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []
