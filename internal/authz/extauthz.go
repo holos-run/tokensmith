@@ -19,13 +19,13 @@ import (
 type Server struct {
 	envoy_auth.UnimplementedAuthorizationServer
 
-	validator *token.Validator
+	validator token.TokenValidator
 	exchanger *token.Exchanger
 	logger    *slog.Logger
 }
 
 // NewServer creates a new external authorization server.
-func NewServer(validator *token.Validator, exchanger *token.Exchanger, logger *slog.Logger) *Server {
+func NewServer(validator token.TokenValidator, exchanger *token.Exchanger, logger *slog.Logger) *Server {
 	return &Server{
 		validator: validator,
 		exchanger: exchanger,

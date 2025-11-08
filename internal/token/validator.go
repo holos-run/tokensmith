@@ -25,12 +25,18 @@ type ServiceAccountIdentity struct {
 	Username string
 }
 
+// TokenValidator is the interface for validating tokens.
+type TokenValidator interface {
+	Validate(ctx context.Context, bearerToken string) (*ServiceAccountIdentity, error)
+}
+
 // Validator validates tokens using the Kubernetes TokenReview API.
+// This is the legacy method that makes network calls to the workload cluster.
 type Validator struct {
 	client kubernetes.Interface
 }
 
-// NewValidator creates a new token validator.
+// NewValidator creates a new token validator using the TokenReview API.
 func NewValidator(client kubernetes.Interface) *Validator {
 	return &Validator{
 		client: client,

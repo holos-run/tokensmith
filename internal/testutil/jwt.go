@@ -32,6 +32,7 @@ type JWTSigner struct {
 	privateKey *rsa.PrivateKey
 	publicKey  *rsa.PublicKey
 	issuer     string
+	keyID      string
 }
 
 // NewJWTSigner creates a new JWT signer with a generated RSA key pair
@@ -41,14 +42,34 @@ func NewJWTSigner(issuer string) (*JWTSigner, error) {
 		return nil, err
 	}
 
+	// Generate a key ID
+	keyID := uuid.New().String()
+
 	return &JWTSigner{
 		privateKey: privateKey,
 		publicKey:  &privateKey.PublicKey,
 		issuer:     issuer,
+		keyID:      keyID,
 	}, nil
 }
 
-// GenerateToken creates a valid Kubernetes service account JWT
+// NewJWTSignerWithKeyID creates a new JWT signer with a specified key ID
+func NewJWTSignerWithKeyID(issuer, keyID string) (*JWTSigner, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+
+	return &JWTSigner{
+		privateKey: privateKey,
+		publicKey:  &privateKey.PublicKey,
+		issuer:     issuer,
+		keyID:      keyID,
+	}, nil
+}
+
+// GenerateToken creates a valid Kubernetes service account JWT with nested claims format.
+// This format is compatible with the TokenClaims struct and existing tests.
 func (s *JWTSigner) GenerateToken(namespace, name, uid string, audiences []string, expiration time.Time) (string, error) {
 	now := time.Now()
 
@@ -75,6 +96,38 @@ func (s *JWTSigner) GenerateToken(namespace, name, uid string, audiences []strin
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	// Set the key ID in the header
+	token.Header["kid"] = s.keyID
+	return token.SignedString(s.privateKey)
+}
+
+// GenerateTokenFlatClaims creates a valid Kubernetes service account JWT with flattened claims.
+// This format matches actual Kubernetes service account tokens and is compatible with go-jose validation.
+// Use this for testing JWKS-based validation.
+func (s *JWTSigner) GenerateTokenFlatClaims(namespace, name, uid string, audiences []string, expiration time.Time) (string, error) {
+	now := time.Now()
+
+	// Generate unique JWT ID (jti) - use UUID format
+	jti := uuid.New().String()
+
+	// Create claims using MapClaims for flexibility
+	// Kubernetes uses flattened claim names like "kubernetes.io/serviceaccount/namespace"
+	claims := jwt.MapClaims{
+		"iss": s.issuer,
+		"sub": "system:serviceaccount:" + namespace + ":" + name,
+		"aud": audiences,
+		"exp": expiration.Unix(),
+		"iat": now.Unix(),
+		"nbf": now.Unix(),
+		"jti": jti,
+		"kubernetes.io/serviceaccount/namespace":            namespace,
+		"kubernetes.io/serviceaccount/service-account.name": name,
+		"kubernetes.io/serviceaccount/service-account.uid":  uid,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	// Set the key ID in the header
+	token.Header["kid"] = s.keyID
 	return token.SignedString(s.privateKey)
 }
 
@@ -93,4 +146,14 @@ func (s *JWTSigner) ParseToken(tokenString string) (*TokenClaims, error) {
 	}
 
 	return nil, jwt.ErrTokenInvalidClaims
+}
+
+// PublicKey returns the RSA public key used for verification
+func (s *JWTSigner) PublicKey() *rsa.PublicKey {
+	return s.publicKey
+}
+
+// KeyID returns the key ID used in token headers
+func (s *JWTSigner) KeyID() string {
+	return s.keyID
 }

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/holos-run/tokensmith/internal/authz"
+	"github.com/holos-run/tokensmith/internal/config"
 	"github.com/holos-run/tokensmith/internal/token"
 )
 
@@ -24,6 +25,7 @@ var (
 	authzAddr              string
 	authzPort              int
 	workloadKubeconfig     string
+	clustersConfig         string
 	tokenExpirationSeconds int64
 )
 
@@ -42,7 +44,9 @@ for tokens in the management cluster using Kubernetes TokenReview and TokenReque
 	cmd.Flags().StringVar(&authzAddr, "addr", "0.0.0.0", "Server address")
 	cmd.Flags().IntVar(&authzPort, "port", 9001, "Server port")
 	cmd.Flags().StringVar(&workloadKubeconfig, "workload-kubeconfig", "",
-		"Path to kubeconfig for workload cluster (if empty, uses in-cluster config)")
+		"Path to kubeconfig for workload cluster (deprecated: use --clusters-config instead)")
+	cmd.Flags().StringVar(&clustersConfig, "clusters-config", "",
+		"Path to YAML file containing multi-cluster configuration")
 	cmd.Flags().Int64Var(&tokenExpirationSeconds, "token-expiration", 3600,
 		"Token expiration in seconds (default: 3600 = 1 hour)")
 
@@ -57,29 +61,72 @@ func runAuthz(cmd *cobra.Command, args []string) error {
 		slog.String("addr", authzAddr),
 		slog.Int("port", authzPort),
 		slog.String("workload_kubeconfig", workloadKubeconfig),
+		slog.String("clusters_config", clustersConfig),
 		slog.Int64("token_expiration", tokenExpirationSeconds),
 	)
 
-	// Initialize Kubernetes clients
-	clientConfig := token.ClientConfig{
-		WorkloadKubeconfig:        workloadKubeconfig,
-		UseInClusterForManagement: true,
-	}
+	// Determine which validation mode to use
+	var validator token.TokenValidator
+	var clients *token.Clients
 
-	clients, err := token.NewClients(ctx, clientConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes clients: %w", err)
-	}
+	if clustersConfig != "" {
+		// Use JWKS-based multi-cluster validation
+		logger.Info("loading clusters configuration", slog.String("path", clustersConfig))
+		cfg, err := config.LoadClustersConfig(clustersConfig)
+		if err != nil {
+			return fmt.Errorf("failed to load clusters config: %w", err)
+		}
 
-	// Health check both clusters
-	logger.Info("performing cluster health checks")
-	if err := clients.HealthCheck(ctx); err != nil {
-		return fmt.Errorf("cluster health check failed: %w", err)
-	}
-	logger.Info("cluster health checks passed")
+		logger.Info("clusters configuration loaded",
+			slog.Int("num_clusters", len(cfg.Clusters)),
+		)
 
-	// Create token validator (workload cluster)
-	validator := token.NewValidator(clients.Workload)
+		validator = token.NewJWKSValidator(cfg)
+
+		// Initialize management cluster client only
+		clientConfig := token.ClientConfig{
+			UseInClusterForManagement: true,
+		}
+		clients, err = token.NewClients(ctx, clientConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+		}
+
+		// Health check management cluster only
+		logger.Info("performing management cluster health check")
+		if err := clients.Management.Discovery().RESTClient().Get().AbsPath("/healthz").Do(ctx).Error(); err != nil {
+			return fmt.Errorf("management cluster health check failed: %w", err)
+		}
+		logger.Info("management cluster health check passed")
+
+	} else {
+		// Use legacy TokenReview-based validation
+		if workloadKubeconfig == "" {
+			logger.Warn("neither --clusters-config nor --workload-kubeconfig specified, using in-cluster config for workload cluster")
+		}
+
+		// Initialize Kubernetes clients
+		clientConfig := token.ClientConfig{
+			WorkloadKubeconfig:        workloadKubeconfig,
+			UseInClusterForManagement: true,
+		}
+
+		var err error
+		clients, err = token.NewClients(ctx, clientConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create Kubernetes clients: %w", err)
+		}
+
+		// Health check both clusters
+		logger.Info("performing cluster health checks")
+		if err := clients.HealthCheck(ctx); err != nil {
+			return fmt.Errorf("cluster health check failed: %w", err)
+		}
+		logger.Info("cluster health checks passed")
+
+		// Create token validator (workload cluster)
+		validator = token.NewValidator(clients.Workload)
+	}
 
 	// Create token exchanger (management cluster)
 	exchangeConfig := token.ExchangeConfig{

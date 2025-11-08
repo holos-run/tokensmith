@@ -19,7 +19,9 @@
       "Bash(go build:*)",
       "Bash(go doc:*)",
       "Bash(go test:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(go list:*)",
+      "Bash(/tmp/tokensmith authz:*)"
     ],
     "deny": [],
     "ask": []
