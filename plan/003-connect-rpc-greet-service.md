@@ -549,9 +549,76 @@ func TestGreetServer_Greet(t *testing.T) {
 }
 ```
 
-### 8. Documentation Updates
+### 8. gRPC Testing Script
 
-#### 8.1 Update README.md
+#### 8.1 Create scripts/test-grpc.sh
+Create a test script that uses `grpcurl` to verify the service works as a standard gRPC service:
+
+```bash
+#!/usr/bin/env bash
+# scripts/test-grpc.sh - Test the greet service using grpcurl
+
+set -euo pipefail
+
+GRPC_URL="${GRPC_URL:-localhost:8080}"
+
+echo "Testing gRPC service at ${GRPC_URL}"
+echo ""
+
+# Test 1: List services (requires reflection)
+echo "1. Listing available services..."
+grpcurl -plaintext "${GRPC_URL}" list || echo "  ⚠️  Reflection not enabled (expected for now)"
+echo ""
+
+# Test 2: Call greet with name
+echo "2. Testing greet with name 'Alice'..."
+grpcurl -plaintext \
+  -d '{"name": "Alice"}' \
+  "${GRPC_URL}" \
+  greet.v1.GreetService/Greet
+echo ""
+
+# Test 3: Call greet without name (should default to World)
+echo "3. Testing greet without name (should default to 'World')..."
+grpcurl -plaintext \
+  -d '{}' \
+  "${GRPC_URL}" \
+  greet.v1.GreetService/Greet
+echo ""
+
+echo "✅ All gRPC tests passed!"
+```
+
+Make the script executable:
+```bash
+chmod +x scripts/test-grpc.sh
+```
+
+#### 8.2 Add grpcurl installation instructions
+Document how to install `grpcurl` for testing:
+
+**macOS:**
+```bash
+brew install grpcurl
+```
+
+**Linux:**
+```bash
+go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+```
+
+**Usage:**
+```bash
+# Start the server in one terminal
+./bin/tokensmith serve
+
+# Run the test script in another terminal
+./scripts/test-grpc.sh
+```
+
+### 9. Documentation Updates
+
+#### 9.1 Update README.md
 Add section about the greet service and new commands:
 ```markdown
 ## Quick Start
@@ -563,9 +630,23 @@ make build
 ```
 
 ### Call the greet service
+
+#### Using the built-in client
 ```bash
 ./bin/tokensmith greet --name Alice
 # Output: Hello, Alice!
+```
+
+#### Using grpcurl (standard gRPC tool)
+```bash
+# Install grpcurl first (macOS)
+brew install grpcurl
+
+# Test the service
+grpcurl -plaintext -d '{"name": "Alice"}' localhost:8080 greet.v1.GreetService/Greet
+
+# Or use the test script
+./scripts/test-grpc.sh
 ```
 
 ### Commands
@@ -591,8 +672,10 @@ make build
 - [ ] Create greet command (cmd/tokensmith/commands/greet.go)
 - [ ] Update main.go to use Cobra
 - [ ] Add unit tests for greet service
+- [ ] Create scripts/test-grpc.sh for grpcurl testing
 - [ ] Update README.md with usage examples
-- [ ] Test end-to-end: start server, call greet
+- [ ] Test end-to-end: start server, call greet with built-in client
+- [ ] Test with grpcurl to verify standard gRPC compatibility
 - [ ] Verify JSON logging output
 - [ ] Commit changes
 
@@ -603,8 +686,10 @@ make build
 3. ✅ `make test` passes all tests
 4. ✅ `tokensmith serve` starts the gRPC server
 5. ✅ `tokensmith greet --name Alice` returns "Hello, Alice!"
-6. ✅ Logs are output in JSON format
-7. ✅ `--log-level` flag controls log verbosity
+6. ✅ `grpcurl -plaintext -d '{"name": "Alice"}' localhost:8080 greet.v1.GreetService/Greet` works
+7. ✅ `./scripts/test-grpc.sh` passes all gRPC compatibility tests
+8. ✅ Logs are output in JSON format
+9. ✅ `--log-level` flag controls log verbosity
 
 ## Future Considerations
 
