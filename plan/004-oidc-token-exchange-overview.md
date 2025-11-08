@@ -1,6 +1,6 @@
 # Plan 004: OIDC Token Exchange for Envoy External Authorization
 
-**Status**: Approved
+**Status**: Complete
 
 ## Overview
 
