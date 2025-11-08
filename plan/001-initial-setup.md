@@ -4,7 +4,7 @@
 Initialize tokensmith as a Go-based Envoy external authorizer for exchanging OIDC ID tokens between Kubernetes clusters.
 
 ## Project Purpose
-Tokensmith exchanges OIDC ID tokens for Kubernetes service accounts in one cluster for ID tokens for valid Kubernetes service accounts in another cluster. This enables secure cross-cluster authentication for Envoy 1.27.
+Tokensmith exchanges OIDC ID tokens for Kubernetes service accounts in one cluster for ID tokens for valid Kubernetes service accounts in another cluster. This enables secure cross-cluster authentication for Istio 1.27.
 
 ## Project Structure
 The project will follow a similar structure to the holos project:
@@ -52,7 +52,7 @@ tokensmith/
   - Development workflow
 - Create comprehensive README.md explaining:
   - Project purpose (OIDC token exchange for cross-cluster auth)
-  - How it works with Envoy 1.27
+  - How it works with Istio 1.27
   - Build and deployment instructions
 
 ### 3. Core Dependencies

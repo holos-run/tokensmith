@@ -1,14 +1,14 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
-## Agent Instructions
+## Agent-Specific Instructions
 
 For agent-specific instructions and workflows, see the [.claude/agents/](.claude/agents/) directory. Each agent has its own configuration file with specialized guidance.
 
 ## Project Overview
 
-Tokensmith is an Envoy external authorizer for Envoy 1.27 that exchanges OIDC ID tokens for Kubernetes service accounts in one cluster for ID tokens for valid Kubernetes service accounts in another cluster. This enables secure cross-cluster authentication.
+Tokensmith is an Envoy external authorizer for Istio 1.27 that exchanges OIDC ID tokens for Kubernetes service accounts in one cluster for ID tokens for valid Kubernetes service accounts in another cluster. This enables secure cross-cluster authentication.
 
 ## Development Workflow
 
